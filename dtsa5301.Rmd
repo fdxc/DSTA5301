@@ -1,0 +1,112 @@
+---
+title: "Report on NYPD shooting incidents"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+date: "2023-08-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Library used in this project**
+
+```{r}
+library(tidyverse)
+library(plyr)
+library(forecast)
+```
+
+## Import Data
+
+The data used in this report is NYDP Shooting Incident Data (Historic) and is downloaded from <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>. The dataset contains every shooting incident occurred in New York dating back to 2006 through the end of 2022.
+
+The codes below import this dataset. After downlaoding and importing data, `summary`function is used to get the overview of this dataset.
+
+```{r}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nydata <- read.csv(url_in)
+
+nydata <- mutate(nydata,OCCUR_DATE=mdy(OCCUR_DATE))
+nydata <- mutate(nydata,OCCUR_TIME=hms(OCCUR_TIME))
+
+
+summary(nydata)
+```
+
+The data now seems a little messy. It needs to be cleaned. We don't need coordinates or longitudes/latitudes of the incidents since we are not analyzing their spatial distribution. Besides, I plan to analyse the occurrence of the shooting with respect to district/neighborhood, and with respect to date and time, so other columns of can be removed. The final table that will be used in this report looks like this:
+
+```{r}
+df <- nydata %>% select(c(OCCUR_DATE,OCCUR_TIME,BORO,PRECINCT,JURISDICTION_CODE,STATISTICAL_MURDER_FLAG))
+
+summary(df)
+```
+
+```{r}
+ggplot(df,aes(x=BORO))+
+ geom_bar()+
+  geom_text(stat='count', aes(label=after_stat(count)), vjust=-0.2)
+```
+
+We see the distribution of historical shooting events across different regions. The Brooklyn area has most shooting events(10933 incidents). The second is Bronx with 7937 incidents. Queens and Manhattan have comparable number of shooting events(4094 and 3572, respectively). Staten Island has least shooting events with only 776 incidents recorded.
+
+```{r}
+df$wday <- wday(df$OCCUR_DATE)
+df$hr   <- hour(df$OCCUR_TIME)
+
+
+counts <- ddply(df, .(df$wday, df$hr), nrow)
+names(counts) <- c("day", "hour", "Freq")
+
+ggplot(counts,aes(x=day,y = hour,fill=Freq))+
+  geom_tile()+
+  scale_fill_gradient(low="white", high="red")
+```
+
+The plot above gives a useful way to visualize shooting occurrence during certain day of the week as well as time of the day. It's evident that the occurrence of shooting events is largest during 0-5 AM at weekends.The number of events is smallest in the morning each day, and starts to increase since afternoon, and will peak around midnight.
+
+```{r}
+df2 <- df   %>% select(c(OCCUR_DATE))                             
+df2$year_month <- floor_date(df2$OCCUR_DATE, "month")
+head(df2)
+
+df2$shooting = 1
+
+df2 <- df2 %>% 
+  group_by(year_month) %>%
+  dplyr::summarize(Counts=sum(shooting)) %>%
+  as.data.frame()
+
+ggplot(df2,aes(year_month,Counts))+
+  geom_line()+
+  xlab("Year")
+```
+
+The plot above demonstrates aggregated number of monthly shooting events. We can see that before 2013, the number of shooting is "stable". We see decrease in shootings since 2013. But since the pandemic, the figure went up again. From year to year, the number is low during winter, and peaks during middle of the year.
+
+```{r}
+dat_ts <- ts(df2[,2], start = c(2006, 1), end = c(2022, 12), frequency = 12)
+plot(dat_ts) # I convert the dataframe to timeseries, so that I can use ARIMA model
+ 
+mod <- auto.arima(dat_ts)
+summary(mod)
+```
+
+The code above uses ARIMA to build our model. Then we forecast for the next three years.
+
+```{r}
+pred <- forecast(mod,h=3*12)
+plot(pred)
+```
+
+The model predicts that in the next three years, the number of shooting in NYC will be slightly lower than thoes of 2021-2022. Each year would have basicly same trends.
+
+## Bias Identification
+
+From the number of shootings by borough, it's attempting to say that Brooklyn is a terrible region with most violent crimes, and the Staten island is the safest place of the New York City. However, one should not neglect the proportion of people in those regions, and even under the same region, the incident would not distribute equally. Such bias could have major impact on one's decision.
+
+## Conclusion
+
+This report briefly demonstrate the shooting events in the New York City across borough and the trends in the total city shootings for the past 17 year. The report also uses a simple model to predict shootings for the next 3 years. The report is only preliminary research and gives some overview of the data. There are a lot in the original dataset that have not been used, and many more are yet to be discovered.
